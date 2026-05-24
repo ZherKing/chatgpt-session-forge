@@ -1,0 +1,17 @@
+{
+  "name": "chatgpt-session-forge",
+  "version": "1.0.0",
+  "description": "Local ChatGPT session manager with Outlook code fetching, batch login, and CPA/sub2api export",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "imapflow": "^1.0.164",
+    "undici": "^8.3.0",
+    "uuid": "^9.0.1"
+  }
+}
