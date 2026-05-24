@@ -9,6 +9,7 @@ const config = require('../config');
 const chatgptService = require('./chatgpt-service');
 const imapService = require('./imap-service');
 const graphService = require('./graph-service');
+const externalMailService = require('./external-mail-service');
 const converter = require('./converter-service');
 
 const DATA_FILE = path.resolve(__dirname, '..', config.dataFile);
@@ -60,6 +61,15 @@ async function fetchVerificationCode(account) {
     sender: '',
     limit: 5,
   };
+
+  const provider = externalMailService.getAccountMailProvider(account);
+  if (provider !== 'outlook') {
+    const result = await externalMailService.fetchEmails(account, options).catch(err => {
+      console.error(`[CPA 仓管外部邮箱取码失败] ${account.email} (${provider}):`, err.message);
+      return { success: false, emails: [] };
+    });
+    return result.emails || [];
+  }
 
   const results = await Promise.all([
     imapService.fetchEmails(account, options).catch(err => {
@@ -332,7 +342,7 @@ async function repairOne401Credential(client, file, onEvent) {
       email,
       action: 'skipped',
       ok: false,
-      message: '本地没有匹配的 Outlook 登录账号',
+      message: '本地没有匹配的登录账号',
       status_message: file.status_message || '',
     };
   }

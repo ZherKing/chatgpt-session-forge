@@ -8,6 +8,7 @@ It can import Outlook accounts, fetch OpenAI verification codes through IMAP or 
 
 - Outlook account import in `email----password----clientId----refreshToken` format
 - Dual mailbox fetching with IMAP and Microsoft Graph
+- External mailbox providers: Cloudflare Temp Email and Cloud Mail
 - Batch ChatGPT login with configurable concurrency
 - Live login status and log stream through SSE
 - Account status tracking, including deactivated account detection
@@ -26,6 +27,7 @@ It can import Outlook accounts, fetch OpenAI verification codes through IMAP or 
   - password
   - Microsoft OAuth client ID
   - refresh token
+- Optional self-hosted Cloudflare Temp Email / Cloud Mail API
 - Network access to:
   - `chatgpt.com`
   - `auth.openai.com`
@@ -84,10 +86,25 @@ Use `direct` or `none` in `config.js` to disable proxy handling.
 ## Usage
 
 1. Open the web UI.
-2. Import Outlook accounts with this format:
+2. Click "Batch Import Mailboxes" on the mailbox tab. Outlook is the default format:
 
    ```text
    user@outlook.com----password----client-id----refresh-token
+   ```
+
+   If verification emails are received through a self-hosted Cloudflare Temp Email or Cloud Mail service, select that provider at the top of the import modal and fill in the visible configuration fields. The app appends the provider config during import and stores the settings in the local browser.
+
+   You can also append a provider manually:
+
+   ```text
+   user@example.com----password----client-id----refresh-token----cloudflare-temp-mail----baseUrl=https://mail.example.com;adminAuth=your-admin-auth
+   user@example.com----password----client-id----refresh-token----cloud-mail----baseUrl=https://mail.example.com;token=your-token
+   ```
+
+   `providerConfig` also accepts JSON:
+
+   ```text
+   user@example.com----password----client-id----refresh-token----cloud-mail----{"baseUrl":"https://mail.example.com","adminEmail":"admin@example.com","adminPassword":"password"}
    ```
 
 3. Go to the auto-login tab.
@@ -173,7 +190,7 @@ The CPA warehouse tab talks directly to the CLIProxyAPI management API. Flow:
 ```text
 scan CPA auth-files
 → find 401 credentials
-→ relogin the matching local Outlook account
+→ relogin the matching local account
 → success: generate and upload fresh CPA JSON
 → deactivated account: delete the old CPA credential
 ```
@@ -184,6 +201,22 @@ Required inputs:
 - management key, sent as `Authorization: Bearer <key>`
 
 Only credentials whose `status/status_message` contains `401` or `unauthorized` are processed automatically. Other failures are skipped or reported to avoid accidental deletion.
+
+## External Mail Providers
+
+External mail providers only affect verification-code fetching. ChatGPT login, CPA/sub2api/Cockpit export, and CPA warehouse behavior remain the same.
+
+The import modal includes visual configuration panels:
+
+- Cloudflare Temp Email: `TEMP API`, `ADMIN AUTH`, `CUSTOM AUTH`, lookup mode, receiving mailbox, random subdomain, and domain refresh
+- Cloud Mail: API address, admin email, admin password, and domain
+
+Supported providers:
+
+- `cloudflare-temp-mail`: compatible with Cloudflare Temp Email management APIs, reads `/admin/mails`, supports `adminAuth` / `customAuth`
+- `cloud-mail`: compatible with Cloud Mail public APIs, reads `/api/public/emailList`, supports `token` or `adminEmail` + `adminPassword`
+
+The provider compatibility layer references the Cloudflare Temp Email / Cloud Mail API patterns from [FoundZiGu/GuJumpgate](https://github.com/FoundZiGu/GuJumpgate). This project only adds verification-mail compatibility, not GuJumpgate's repository automation.
 
 ## Data Storage
 

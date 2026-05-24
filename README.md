@@ -10,6 +10,7 @@
 
 - 支持批量导入 Outlook 账号
 - 支持 IMAP 与 Microsoft Graph 双协议取件
+- 支持外部邮箱 Provider：Cloudflare Temp Email / Cloud Mail
 - 自动从邮箱中提取 OpenAI 验证码
 - 支持批量 ChatGPT 登录，并可设置并发数
 - 登录进度、状态和日志实时刷新
@@ -29,6 +30,7 @@
   - 密码
   - Microsoft OAuth Client ID
   - Refresh Token
+- 可选：自建 Cloudflare Temp Email / Cloud Mail 收件 API
 - 可以访问以下服务：
   - `chatgpt.com`
   - `auth.openai.com`
@@ -85,10 +87,25 @@ HTTPS_PROXY=http://127.0.0.1:7897 npm start
 ## 使用方法
 
 1. 打开 Web UI。
-2. 在“邮箱取件”页导入 Outlook 账号，格式如下：
+2. 在“邮箱取件”页点击“批量导入邮箱”。默认使用 Outlook，格式如下：
 
    ```text
    user@outlook.com----password----client-id----refresh-token
+   ```
+
+   如果验证码邮件不是 Outlook 收件，而是自建 Cloudflare Temp Email / Cloud Mail，可以在导入弹窗顶部选择对应邮箱服务并填写配置。导入时会自动把 Provider 配置附加到账号行，配置会保存在本机浏览器里。
+
+   也可以手动追加 provider：
+
+   ```text
+   user@example.com----password----client-id----refresh-token----cloudflare-temp-mail----baseUrl=https://mail.example.com;adminAuth=your-admin-auth
+   user@example.com----password----client-id----refresh-token----cloud-mail----baseUrl=https://mail.example.com;token=your-token
+   ```
+
+   `providerConfig` 也支持 JSON：
+
+   ```text
+   user@example.com----password----client-id----refresh-token----cloud-mail----{"baseUrl":"https://mail.example.com","adminEmail":"admin@example.com","adminPassword":"password"}
    ```
 
 3. 进入“自动登录”页。
@@ -174,7 +191,7 @@ Cockpit 导出采用 `cockpit-tools` 当前导入逻辑支持的扁平 Codex tok
 ```text
 扫描 CPA auth-files
 → 发现 401 凭证
-→ 用本地同邮箱 Outlook 账号重新登录 ChatGPT
+→ 用本地同邮箱账号重新登录 ChatGPT
 → 登录成功：生成 CPA JSON 并上传覆盖
 → 登录失败且账号已停用：删除 CPA 中的旧凭证
 ```
@@ -185,6 +202,22 @@ Cockpit 导出采用 `cockpit-tools` 当前导入逻辑支持的扁平 Codex tok
 - 管理密钥，对应 CLIProxyAPI 管理 API 的 `Authorization: Bearer <key>`
 
 本功能只会自动处理 `status/status_message` 中包含 `401` 或 `unauthorized` 的凭证。其他异常会跳过或记录失败，避免误删。
+
+## 外部邮箱 Provider
+
+外部邮箱 Provider 只影响“获取验证码邮件”这一步，不会改变 ChatGPT 登录、CPA / sub2api / Cockpit 导出和 CPA 仓管逻辑。
+
+导入弹窗已经内置可视化配置面板：
+
+- Cloudflare Temp Email：支持 `TEMP API`、`ADMIN AUTH`、`CUSTOM AUTH`、查询方式、接收邮箱、随机子域和域名更新
+- Cloud Mail：支持 `API 地址`、管理员邮箱、管理员密码和域名
+
+当前支持：
+
+- `cloudflare-temp-mail`：兼容 Cloudflare Temp Email 管理接口，读取 `/admin/mails`，可配置 `adminAuth` / `customAuth`
+- `cloud-mail`：兼容 Cloud Mail 公共接口，读取 `/api/public/emailList`，可配置 `token`，或用 `adminEmail` + `adminPassword` 自动获取 token
+
+该兼容层参考了 [FoundZiGu/GuJumpgate](https://github.com/FoundZiGu/GuJumpgate) 中 Cloudflare Temp Email / Cloud Mail 的接口思路；本项目没有合并它的仓管功能，只在取验证码邮件这层增加兼容。
 
 ## 本地数据
 

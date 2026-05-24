@@ -10,6 +10,7 @@ const config = require('../config');
 const chatgptService = require('../services/chatgpt-service');
 const imapService = require('../services/imap-service');
 const graphService = require('../services/graph-service');
+const externalMailService = require('../services/external-mail-service');
 
 const DATA_FILE = path.resolve(__dirname, '..', config.dataFile);
 
@@ -63,6 +64,15 @@ async function fetchVerificationCode(account) {
     sender: '',
     limit: 5,
   };
+
+  const provider = externalMailService.getAccountMailProvider(account);
+  if (provider !== 'outlook') {
+    const result = await externalMailService.fetchEmails(account, options).catch(err => {
+      console.error(`[外部邮箱取码失败] ${account.email} (${provider}):`, err.message);
+      return { success: false, emails: [] };
+    });
+    return result.emails || [];
+  }
 
   const promises = [];
 

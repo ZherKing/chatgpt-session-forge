@@ -18,19 +18,21 @@ async function fetchEmails(accounts, options = {}) {
 
   const useImap = document.getElementById('toggleImap').checked;
   const useGraph = document.getElementById('toggleGraph').checked;
+  const externalAccounts = accounts.filter(account => getAccountProvider(account) !== 'outlook');
+  const outlookAccounts = accounts.length - externalAccounts.length;
 
-  if (!useImap && !useGraph) {
+  if (outlookAccounts > 0 && !useImap && !useGraph) {
     showToast('请至少选择一种协议', 'warning');
     return;
   }
 
   const protocolCount = (useImap ? 1 : 0) + (useGraph ? 1 : 0);
-  const totalSteps = accounts.length * protocolCount;
+  const totalSteps = (outlookAccounts * protocolCount) + externalAccounts.length;
   let completedSteps = 0;
 
   setStatus('loading', '取件中...');
   showProgress(true);
-  updateProgress(0, `准备并发取件 ${accounts.length} 个邮箱 (并发${FETCH_CONCURRENCY}, ${protocolCount}协议)...`);
+  updateProgress(0, `准备并发取件 ${accounts.length} 个邮箱 (并发${FETCH_CONCURRENCY})...`);
   showSkeletonCards(3);
 
   const allEmails = [];
@@ -42,6 +44,38 @@ async function fetchEmails(accounts, options = {}) {
     const emailShort = account.email.split('@')[0];
     const accountLabel = `[${index + 1}/${accounts.length}] ${emailShort}`;
     const promises = [];
+    const provider = getAccountProvider(account);
+
+    if (provider !== 'outlook') {
+      try {
+        const res = await fetch('/api/fetch-provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: account.email,
+            mailProvider: account.mailProvider || account.provider,
+            mailConfig: account.mailConfig || account.providerConfig,
+            keyword: options.keyword || '',
+            limit: options.limit || 10,
+            sender: options.sender || '',
+          }),
+        });
+        const result = await res.json();
+        completedSteps++;
+        updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — ${accountProviderLabel(provider)} ${result.success ? 'OK' : '失败'} ${result.count || 0} 封`);
+        if (result.success) successfulAccounts++;
+        else fatalErrors.push({ email: account.email, protocol: provider, error: result.error });
+        if (result.emails && result.emails.length > 0) {
+          result.emails.forEach(e => { e._account = account.email; });
+          allEmails.push(...result.emails);
+        }
+      } catch (err) {
+        completedSteps++;
+        updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — ${accountProviderLabel(provider)} 失败`);
+        fatalErrors.push({ email: account.email, protocol: provider, error: err.message });
+      }
+      return;
+    }
 
     if (useGraph) {
       promises.push((async () => {
@@ -58,11 +92,11 @@ async function fetchEmails(accounts, options = {}) {
           });
           const result = await res.json();
           completedSteps++;
-          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — Graph ✅ ${result.count || 0} 封`);
+          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — Graph ${result.success ? 'OK' : '失败'} ${result.count || 0} 封`);
           return result;
         } catch (err) {
           completedSteps++;
-          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — Graph ❌`);
+          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — Graph 失败`);
           return { success: false, emails: [], protocol: 'graph', error: err.message };
         }
       })());
@@ -77,17 +111,17 @@ async function fetchEmails(accounts, options = {}) {
             body: JSON.stringify({
               email: account.email, clientId: account.clientId,
               refreshToken: account.refreshToken,
-              keyword: options.keyword || '', limit: Math.min(options.limit || 5, 10),
+              keyword: options.keyword || '', limit: options.limit || 10,
               sender: options.sender || '',
             }),
           });
           const result = await res.json();
           completedSteps++;
-          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — IMAP ✅ ${result.count || 0} 封`);
+          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — IMAP ${result.success ? 'OK' : '失败'} ${result.count || 0} 封`);
           return result;
         } catch (err) {
           completedSteps++;
-          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — IMAP ❌`);
+          updateProgress(Math.round((completedSteps / totalSteps) * 95), `${accountLabel} — IMAP 失败`);
           return { success: false, emails: [], protocol: 'imap', error: err.message };
         }
       })());
@@ -106,25 +140,15 @@ async function fetchEmails(accounts, options = {}) {
     });
   }
 
-  // 并发池执行
-  const pool = [];
-  for (let i = 0; i < accounts.length; i++) {
-    const task = fetchOneAccount(accounts[i], i);
-    pool.push(task);
-
-    // 达到并发上限时，等待最快完成的一个
-    if (pool.length >= FETCH_CONCURRENCY) {
-      await Promise.race(pool);
-      // 移除已完成的
-      for (let j = pool.length - 1; j >= 0; j--) {
-        const status = Promise.race([pool[j], Promise.resolve('__pending__')]);
-        const result = await status;
-        if (result !== '__pending__') pool.splice(j, 1);
-      }
+  // 固定并发 worker，避免 Outlook IMAP 连接数瞬间冲高。
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(FETCH_CONCURRENCY, accounts.length) }, async () => {
+    while (nextIndex < accounts.length) {
+      const currentIndex = nextIndex++;
+      await fetchOneAccount(accounts[currentIndex], currentIndex);
     }
-  }
-  // 等待剩余任务完成
-  await Promise.all(pool);
+  });
+  await Promise.all(workers);
 
   updateProgress(97, '去重合并中...');
   const merged = deduplicateEmails(allEmails);
@@ -144,7 +168,8 @@ async function fetchEmails(accounts, options = {}) {
 
   const imapCount = merged.filter(e => e.protocol === 'imap').length;
   const graphCount = merged.filter(e => e.protocol === 'graph').length;
-  showToast(`取件完成：共 ${merged.length} 封 (IMAP: ${imapCount} / Graph: ${graphCount})`, 'success', 4000);
+  const externalCount = merged.length - imapCount - graphCount;
+  showToast(`取件完成：共 ${merged.length} 封 (IMAP: ${imapCount} / Graph: ${graphCount} / 外部: ${externalCount})`, 'success', 4000);
   addLog(`取件完成: ${merged.length} 封 (${accounts.length} 个邮箱)`, 'success');
 }
 
@@ -161,11 +186,15 @@ function renderEmailList(emails) {
 
   const imapEmails = emails.filter(e => e.protocol === 'imap');
   const graphEmails = emails.filter(e => e.protocol === 'graph');
+  const externalEmails = emails.filter(e => e.protocol !== 'imap' && e.protocol !== 'graph');
+  const existingExternalCount = document.getElementById('externalCount');
+  if (existingExternalCount) existingExternalCount.remove();
 
   imapCountEl.style.display = imapEmails.length > 0 ? 'inline' : 'none';
   graphCountEl.style.display = graphEmails.length > 0 ? 'inline' : 'none';
   imapCountEl.textContent = `IMAP: ${imapEmails.length}`;
   graphCountEl.textContent = `Graph: ${graphEmails.length}`;
+  graphCountEl.insertAdjacentHTML('afterend', externalEmails.length > 0 ? `<span class="badge badge-external" id="externalCount">外部: ${externalEmails.length}</span>` : '');
   totalCountEl.textContent = `共 ${emails.length} 封`;
 
   if (emails.length === 0) {

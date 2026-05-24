@@ -33,6 +33,186 @@ function getAccountSearchKeyword() {
   return (document.getElementById('accountSearch')?.value || '').trim().toLowerCase();
 }
 
+function normalizeAccountProvider(value = '') {
+  const provider = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+  if (['cloudflare-temp-mail', 'cloudflare-temp-email', 'cloudflare'].includes(provider)) return 'cloudflare-temp-mail';
+  if (['cloud-mail', 'cloudmail'].includes(provider)) return 'cloud-mail';
+  return 'outlook';
+}
+
+function getAccountProvider(account = {}) {
+  return normalizeAccountProvider(account.mailProvider || account.provider || account.mail_provider);
+}
+
+function accountProviderLabel(provider) {
+  const labels = {
+    outlook: 'Outlook',
+    'cloudflare-temp-mail': 'CF Temp',
+    'cloud-mail': 'Cloud Mail',
+  };
+  return labels[provider] || provider;
+}
+
+const IMPORT_PROVIDER_SETTINGS_KEY = 'mailImportProviderSettings';
+
+function getImportProvider() {
+  return normalizeAccountProvider(document.getElementById('importMailProvider')?.value || 'outlook');
+}
+
+function getRadioValue(name, fallback = '') {
+  return document.querySelector(`input[name="${name}"]:checked`)?.value || fallback;
+}
+
+function setRadioValue(name, value) {
+  const radio = document.querySelector(`input[name="${name}"][value="${value}"]`);
+  if (radio) radio.checked = true;
+}
+
+function compactObject(obj) {
+  return Object.fromEntries(Object.entries(obj).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== ''));
+}
+
+function readImportProviderSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(IMPORT_PROVIDER_SETTINGS_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function collectImportProviderSettings() {
+  return {
+    provider: getImportProvider(),
+    cloudflare: {
+      baseUrl: document.getElementById('cfTempBaseUrl')?.value.trim() || '',
+      adminAuth: document.getElementById('cfAdminAuth')?.value.trim() || '',
+      customAuth: document.getElementById('cfCustomAuth')?.value.trim() || '',
+      lookupMode: getRadioValue('cfLookupMode', 'receive-mailbox'),
+      receiveMailbox: document.getElementById('cfReceiveMailbox')?.value.trim() || '',
+      randomSubdomain: Boolean(document.getElementById('cfRandomSubdomain')?.checked),
+      domain: document.getElementById('cfTempDomain')?.value.trim() || '',
+    },
+    cloudMail: {
+      baseUrl: document.getElementById('cloudMailBaseUrl')?.value.trim() || '',
+      adminEmail: document.getElementById('cloudMailAdminEmail')?.value.trim() || '',
+      adminPassword: document.getElementById('cloudMailAdminPassword')?.value.trim() || '',
+      domain: document.getElementById('cloudMailDomain')?.value.trim() || '',
+    },
+  };
+}
+
+function saveImportProviderSettings() {
+  try {
+    localStorage.setItem(IMPORT_PROVIDER_SETTINGS_KEY, JSON.stringify(collectImportProviderSettings()));
+  } catch {}
+}
+
+function applyImportProviderSettings() {
+  const settings = readImportProviderSettings();
+  if (settings.provider && document.getElementById('importMailProvider')) {
+    document.getElementById('importMailProvider').value = normalizeAccountProvider(settings.provider);
+  }
+
+  const cf = settings.cloudflare || {};
+  if (cf.baseUrl) document.getElementById('cfTempBaseUrl').value = cf.baseUrl;
+  if (cf.adminAuth) document.getElementById('cfAdminAuth').value = cf.adminAuth;
+  if (cf.customAuth) document.getElementById('cfCustomAuth').value = cf.customAuth;
+  if (cf.lookupMode) setRadioValue('cfLookupMode', cf.lookupMode);
+  if (cf.receiveMailbox) document.getElementById('cfReceiveMailbox').value = cf.receiveMailbox;
+  document.getElementById('cfRandomSubdomain').checked = Boolean(cf.randomSubdomain);
+  if (cf.domain) document.getElementById('cfTempDomain').value = cf.domain;
+
+  const cloudMail = settings.cloudMail || {};
+  if (cloudMail.baseUrl) document.getElementById('cloudMailBaseUrl').value = cloudMail.baseUrl;
+  if (cloudMail.adminEmail) document.getElementById('cloudMailAdminEmail').value = cloudMail.adminEmail;
+  if (cloudMail.adminPassword) document.getElementById('cloudMailAdminPassword').value = cloudMail.adminPassword;
+  if (cloudMail.domain) document.getElementById('cloudMailDomain').value = cloudMail.domain;
+}
+
+function buildImportProviderConfig(provider = getImportProvider()) {
+  if (provider === 'outlook') return { ok: true, config: '', errors: [] };
+
+  const settings = collectImportProviderSettings();
+  const errors = [];
+  let config = {};
+
+  if (provider === 'cloudflare-temp-mail') {
+    const cf = settings.cloudflare;
+    if (!cf.baseUrl) errors.push('Cloudflare Temp Email 缺少 TEMP API');
+    if (cf.lookupMode === 'receive-mailbox' && !cf.receiveMailbox) {
+      errors.push('Cloudflare Temp Email 选择「邮件接收」时需要填写接收邮箱');
+    }
+    config = compactObject({
+      baseUrl: cf.baseUrl,
+      adminAuth: cf.adminAuth,
+      customAuth: cf.customAuth,
+      lookupMode: cf.lookupMode,
+      receiveMailbox: cf.receiveMailbox,
+      randomSubdomain: cf.randomSubdomain ? 'true' : '',
+      domain: cf.domain,
+    });
+  }
+
+  if (provider === 'cloud-mail') {
+    const cloudMail = settings.cloudMail;
+    if (!cloudMail.baseUrl) errors.push('Cloud Mail 缺少 API 地址');
+    if (!cloudMail.adminEmail) errors.push('Cloud Mail 缺少管理员邮箱');
+    if (!cloudMail.adminPassword) errors.push('Cloud Mail 缺少管理员密码');
+    config = compactObject({
+      baseUrl: cloudMail.baseUrl,
+      adminEmail: cloudMail.adminEmail,
+      adminPassword: cloudMail.adminPassword,
+      domain: cloudMail.domain,
+    });
+  }
+
+  return {
+    ok: errors.length === 0,
+    config: JSON.stringify(config),
+    errors,
+  };
+}
+
+function refreshImportProviderUi() {
+  const provider = getImportProvider();
+  const cfPanel = document.getElementById('cloudflareProviderPanel');
+  const cloudMailPanel = document.getElementById('cloudMailProviderPanel');
+  const note = document.getElementById('importProviderNote');
+  const formatTip = document.getElementById('importFormatTip');
+  const providerHelp = document.getElementById('importProviderHelp');
+  const textarea = document.getElementById('importTextarea');
+
+  if (cfPanel) cfPanel.hidden = provider !== 'cloudflare-temp-mail';
+  if (cloudMailPanel) cloudMailPanel.hidden = provider !== 'cloud-mail';
+
+  if (note) {
+    const notes = {
+      outlook: '导入时保持 Outlook 四段格式',
+      'cloudflare-temp-mail': '会自动追加 Cloudflare Temp Email 配置',
+      'cloud-mail': '会自动追加 Cloud Mail 配置',
+    };
+    note.textContent = notes[provider] || notes.outlook;
+  }
+
+  if (formatTip) {
+    formatTip.innerHTML = provider === 'outlook'
+      ? 'Outlook 每行一个：<code>登录邮箱----登录密码或占位----clientid----刷新令牌</code>'
+      : '外部邮箱每行一个：<code>登录邮箱----登录密码或占位</code>，也兼容四段格式';
+  }
+
+  if (providerHelp) {
+    providerHelp.textContent = provider === 'outlook'
+      ? 'Outlook 取验证码会使用该行的 clientid 和刷新令牌；如果 OpenAI 要求密码登录，会使用第二段密码。'
+      : 'Cloudflare Temp Email / Cloud Mail 的 API 配置填在上面；第二段不是自建邮箱密码，如果 OpenAI 只要验证码，可以填 x。';
+  }
+
+  if (textarea) {
+    textarea.placeholder = provider === 'outlook'
+      ? 'login-email@outlook.com----openai-password-or-x----client-id-here----refresh-token-here\nlogin-email2@outlook.com--openai-password-or-x--clientid--token'
+      : 'login-email@example.com----x\nanother-login-email@example.com----openai-password-if-needed';
+  }
+}
+
 // ==================== 渲染邮箱列表 ====================
 async function renderAccountList(highlightIds = null) {
   const accounts = await loadAccounts();
@@ -75,9 +255,14 @@ async function renderAccountList(highlightIds = null) {
 
   visible.forEach((acc, i) => {
     const isNew = highlightIds && highlightIds.has(acc.id);
+    const provider = getAccountProvider(acc);
+    const providerBadge = provider !== 'outlook'
+      ? `<span class="account-provider ${provider}">${accountProviderLabel(provider)}</span>`
+      : '';
     html += `<div class="account-item ${isNew ? 'account-item-new' : ''}" data-id="${acc.id}" style="animation-delay:${isNew ? i * 0.05 : 0}s">
       <input type="checkbox" class="account-checkbox account-check" data-id="${acc.id}" />
       <span class="account-email" title="${escapeAttr(acc.email)}">${escapeHtml(acc.email)}</span>
+      ${providerBadge}
       <button class="account-copy" data-email="${escapeAttr(acc.email)}" title="复制邮箱">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
       </button>
@@ -215,60 +400,153 @@ function parseImportTextPreview(text) {
   const lines = text.trim().split('\n');
   const accounts = [];
   const errors = [];
+  const needsProviderConfig = [];
+  const selectedProvider = getImportProvider();
 
   lines.forEach((line, index) => {
     const trimmed = line.trim();
     if (!trimmed) return;
 
-    let parts = null;
-    for (let dashCount = 4; dashCount >= 1; dashCount--) {
-      const sep = '-'.repeat(dashCount);
-      const testParts = trimmed.split(sep);
-      if (testParts.length === 4) {
-        const cleaned = testParts.map(p => p.trim());
-        if (cleaned.every(p => p.length > 0)) { parts = cleaned; break; }
-      }
-      if (testParts.length > 4) {
-        const cleaned = [];
-        let remaining = trimmed;
-        for (let i = 0; i < 3; i++) {
-          const idx = remaining.indexOf(sep);
-          if (idx === -1) break;
-          cleaned.push(remaining.substring(0, idx).trim());
-          remaining = remaining.substring(idx + sep.length);
-        }
-        if (cleaned.length === 3 && remaining.trim().length > 0) {
-          cleaned.push(remaining.trim());
-          parts = cleaned;
-          break;
-        }
-      }
+    let parsed = null;
+    if (selectedProvider !== 'outlook') {
+      parsed = parseExternalSimpleImportLine(trimmed);
     }
 
-    if (!parts || parts.length !== 4) { errors.push(index); return; }
-    if (!parts[0].includes('@')) { errors.push(index); return; }
-    accounts.push({ email: parts[0] });
+    for (let dashCount = 4; dashCount >= 1; dashCount--) {
+      if (parsed) break;
+      const sep = '-'.repeat(dashCount);
+      let remaining = trimmed;
+      const fields = [];
+      for (let i = 0; i < 3; i++) {
+        const idx = remaining.indexOf(sep);
+        if (idx === -1) break;
+        fields.push(remaining.substring(0, idx).trim());
+        remaining = remaining.substring(idx + sep.length);
+      }
+      if (fields.length !== 3 || fields.some(field => !field) || !remaining.trim()) continue;
+
+      const tailParts = remaining.trim().split(sep).map(part => part.trim());
+      let provider = 'outlook';
+      let hasConfig = true;
+      let hasInlineProvider = false;
+      if (tailParts.length >= 2) {
+        const maybeProvider = normalizeAccountProvider(tailParts[1]);
+        if (maybeProvider !== 'outlook') {
+          provider = maybeProvider;
+          hasConfig = tailParts.slice(2).join(sep).trim().length > 0;
+          hasInlineProvider = true;
+        }
+      }
+
+      parsed = {
+        email: fields[0],
+        provider,
+        validConfig: hasConfig,
+        hasInlineProvider,
+      };
+      break;
+    }
+
+    if (!parsed || !parsed.email.includes('@') || !parsed.validConfig) { errors.push(index); return; }
+    if (!parsed.hasInlineProvider) needsProviderConfig.push(index);
+    accounts.push(parsed);
   });
 
-  return { accounts, errors, lines: lines.filter(l => l.trim()).length };
+  return { accounts, errors, needsProviderConfig, lines: lines.filter(l => l.trim()).length };
+}
+
+function parseExternalSimpleImportLine(line) {
+  for (let dashCount = 4; dashCount >= 1; dashCount--) {
+    const sep = '-'.repeat(dashCount);
+    const idx = line.indexOf(sep);
+    if (idx === -1) continue;
+    const email = line.slice(0, idx).trim();
+    const password = line.slice(idx + sep.length).trim();
+    if (!email || !password || password.includes(sep)) continue;
+    return {
+      email,
+      provider: getImportProvider(),
+      validConfig: true,
+      hasInlineProvider: false,
+      simpleExternal: true,
+      sep,
+    };
+  }
+  return null;
 }
 
 function updateImportPreview() {
   const textarea = document.getElementById('importTextarea');
   const previewEl = document.getElementById('importPreview');
   const text = textarea.value.trim();
+  const provider = getImportProvider();
+  const providerConfig = buildImportProviderConfig(provider);
 
   if (!text) {
-    previewEl.innerHTML = '<span class="preview-hint">💡 粘贴邮箱数据后将自动预览，支持 Ctrl+Enter 快捷导入</span>';
+    const configMessage = provider !== 'outlook' && !providerConfig.ok
+      ? ` <span class="preview-error">${providerConfig.errors.map(escapeHtml).join('，')}</span>`
+      : '';
+    previewEl.innerHTML = `<span class="preview-hint">💡 粘贴邮箱数据后将自动预览，支持 Ctrl+Enter 快捷导入</span>${configMessage}`;
     return;
   }
 
-  const { accounts, errors, lines } = parseImportTextPreview(text);
+  const { accounts, errors, needsProviderConfig, lines } = parseImportTextPreview(text);
+  const externalCount = accounts.filter(account => account.provider !== 'outlook').length;
   let html = `<span class="preview-count">📋 识别 ${lines} 行`;
   if (accounts.length > 0) html += ` → <span class="preview-valid">✅ ${accounts.length} 个有效</span>`;
+  if (externalCount > 0) html += ` <span class="preview-valid">外部邮箱 ${externalCount} 个</span>`;
+  if (provider !== 'outlook' && needsProviderConfig.length > 0) {
+    html += ` <span class="${providerConfig.ok ? 'preview-valid' : 'preview-error'}">将套用 ${accountProviderLabel(provider)} 配置 ${needsProviderConfig.length} 行</span>`;
+  }
+  if (provider !== 'outlook' && !providerConfig.ok) {
+    html += ` <span class="preview-error">${providerConfig.errors.map(escapeHtml).join('，')}</span>`;
+  }
   if (errors.length > 0) html += ` <span class="preview-error">❌ ${errors.length} 个错误</span>`;
   html += '</span>';
   previewEl.innerHTML = html;
+}
+
+function lineHasInlineExternalProvider(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return false;
+  for (let dashCount = 4; dashCount >= 1; dashCount--) {
+    const sep = '-'.repeat(dashCount);
+    let remaining = trimmed;
+    const fields = [];
+    for (let i = 0; i < 3; i++) {
+      const idx = remaining.indexOf(sep);
+      if (idx === -1) break;
+      fields.push(remaining.substring(0, idx).trim());
+      remaining = remaining.substring(idx + sep.length);
+    }
+    if (fields.length !== 3 || fields.some(field => !field) || !remaining.trim()) continue;
+    const tailParts = remaining.trim().split(sep).map(part => part.trim());
+    return tailParts.length >= 2 && normalizeAccountProvider(tailParts[1]) !== 'outlook';
+  }
+  return false;
+}
+
+function prepareImportText(rawText) {
+  const provider = getImportProvider();
+  if (provider === 'outlook') return { ok: true, text: rawText, errors: [] };
+
+  const providerConfig = buildImportProviderConfig(provider);
+  if (!providerConfig.ok) return { ok: false, text: rawText, errors: providerConfig.errors };
+
+  const lines = rawText.split('\n').map(line => {
+    if (!line.trim() || lineHasInlineExternalProvider(line)) return line;
+    const normalizedLine = normalizeExternalImportLine(line, provider);
+    return `${normalizedLine}----${provider}----${providerConfig.config}`;
+  });
+
+  return { ok: true, text: lines.join('\n'), errors: [] };
+}
+
+function normalizeExternalImportLine(line, provider) {
+  const trimmed = String(line || '').trim();
+  const simple = parseExternalSimpleImportLine(trimmed);
+  if (!simple) return trimmed;
+  return `${simple.email}----${trimmed.slice(trimmed.indexOf(simple.sep) + simple.sep.length).trim()}----external-clientid----external-refresh-token`;
 }
 
 // ==================== 事件绑定 ====================
@@ -277,11 +555,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const importModal = document.getElementById('importModal');
   const importTextarea = document.getElementById('importTextarea');
+  applyImportProviderSettings();
+  refreshImportProviderUi();
 
   document.getElementById('btnOpenImport').addEventListener('click', () => {
     importModal.classList.add('active');
     importTextarea.focus();
     importTextarea.classList.remove('textarea-error');
+    refreshImportProviderUi();
     updateImportPreview();
   });
 
@@ -292,6 +573,74 @@ document.addEventListener('DOMContentLoaded', () => {
   importTextarea.addEventListener('input', () => {
     importTextarea.classList.remove('textarea-error');
     updateImportPreview();
+  });
+
+  document.getElementById('importMailProvider')?.addEventListener('change', () => {
+    refreshImportProviderUi();
+    saveImportProviderSettings();
+    updateImportPreview();
+  });
+
+  document.querySelectorAll('#cloudflareProviderPanel input, #cloudflareProviderPanel select, #cloudMailProviderPanel input, #cloudMailProviderPanel select').forEach(el => {
+    el.addEventListener('input', () => {
+      saveImportProviderSettings();
+      updateImportPreview();
+    });
+    el.addEventListener('change', () => {
+      saveImportProviderSettings();
+      updateImportPreview();
+    });
+  });
+
+  document.querySelectorAll('.secret-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = document.getElementById(btn.dataset.target);
+      if (!input) return;
+      input.type = input.type === 'password' ? 'text' : 'password';
+    });
+  });
+
+  document.getElementById('btnCfRefreshDomains')?.addEventListener('click', async () => {
+    const btn = document.getElementById('btnCfRefreshDomains');
+    const configResult = buildImportProviderConfig('cloudflare-temp-mail');
+    const cfSettings = collectImportProviderSettings().cloudflare;
+    if (!cfSettings.baseUrl) {
+      showToast('请先填写 Cloudflare Temp Email 的 TEMP API', 'warning');
+      return;
+    }
+
+    setButtonLoading(btn, true);
+    try {
+      const res = await fetch('/api/fetch-provider-domains', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'cloudflare-temp-mail',
+          mailConfig: configResult.config || JSON.stringify(compactObject({
+            baseUrl: cfSettings.baseUrl,
+            adminAuth: cfSettings.adminAuth,
+            customAuth: cfSettings.customAuth,
+          })),
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || '更新域名失败');
+
+      const optionsEl = document.getElementById('cfTempDomainOptions');
+      optionsEl.innerHTML = (data.domains || [])
+        .map(domain => `<option value="${escapeAttr(domain)}"></option>`)
+        .join('');
+      if (data.domains?.length && !document.getElementById('cfTempDomain').value.trim()) {
+        document.getElementById('cfTempDomain').value = data.domains[0];
+      }
+      saveImportProviderSettings();
+      updateImportPreview();
+      showToast(`已更新 ${data.domains?.length || 0} 个域名`, 'success');
+    } catch (err) {
+      showToast('更新域名失败: ' + err.message, 'error');
+    } finally {
+      setButtonLoading(btn, false);
+    }
   });
 
   // 确认导入
@@ -307,10 +656,17 @@ document.addEventListener('DOMContentLoaded', () => {
     setButtonLoading(btn, true);
 
     try {
+      const prepared = prepareImportText(text);
+      if (!prepared.ok) {
+        prepared.errors.forEach(err => showToast(err, 'error', 5000));
+        importTextarea.classList.add('textarea-error');
+        return;
+      }
+
       const res = await fetch('/api/accounts/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: prepared.text }),
       });
       const data = await res.json();
 

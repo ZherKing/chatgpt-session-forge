@@ -388,14 +388,115 @@
 
   <!-- 导入弹窗 -->
   <div class="modal-overlay" id="importModal">
-    <div class="modal glass-panel">
+    <div class="modal import-modal glass-panel">
       <div class="modal-header">
         <h3>批量导入邮箱</h3>
         <button class="btn-close" id="btnCloseModal">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="modal-tip">每行一个，格式：<code>账号----密码----clientid----刷新令牌</code></p>
-        <p class="modal-tip text-muted">分隔符支持 1~4 个短横线（<code>-</code> 到 <code>----</code>）</p>
+        <div class="import-provider-top">
+          <label class="config-field import-provider-select-wrap">
+            <span>邮箱服务</span>
+            <select id="importMailProvider" class="input select config-input">
+              <option value="outlook">Outlook</option>
+              <option value="cloudflare-temp-mail">Cloudflare Temp Email</option>
+              <option value="cloud-mail">Cloud Mail</option>
+            </select>
+          </label>
+          <span class="import-provider-note" id="importProviderNote">导入时保持 Outlook 四段格式</span>
+        </div>
+
+        <section class="mail-provider-panel" id="cloudflareProviderPanel" hidden>
+          <div class="provider-panel-title">
+            <div>
+              <strong>CLOUDFLARE TEMP EMAIL</strong>
+              <span>用于接收 ChatGPT 验证码邮件</span>
+            </div>
+            <div class="provider-panel-actions">
+              <a href="https://github.com/FoundZiGu/GuJumpgate" target="_blank" rel="noreferrer">参考项目</a>
+            </div>
+          </div>
+          <div class="config-grid">
+            <label class="config-field">
+              <span>TEMP API</span>
+              <input type="text" id="cfTempBaseUrl" class="input config-input" placeholder="https://your-worker-domain" autocomplete="off" />
+            </label>
+            <label class="config-field secret-field">
+              <span>ADMIN AUTH</span>
+              <input type="password" id="cfAdminAuth" class="input config-input secret-input" placeholder="Cloudflare Temp Email admin password" autocomplete="off" />
+              <button type="button" class="secret-toggle" data-target="cfAdminAuth" title="显示/隐藏">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </label>
+            <label class="config-field secret-field">
+              <span>CUSTOM AUTH</span>
+              <input type="password" id="cfCustomAuth" class="input config-input secret-input" placeholder="站点启用访问密码时填写" autocomplete="off" />
+              <button type="button" class="secret-toggle" data-target="cfCustomAuth" title="显示/隐藏">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </label>
+            <div class="config-field">
+              <span>查询方式</span>
+              <div class="provider-segment" id="cfLookupMode">
+                <label><input type="radio" name="cfLookupMode" value="receive-mailbox" checked><span>邮件接收</span></label>
+                <label><input type="radio" name="cfLookupMode" value="registration-email"><span>注册邮箱</span></label>
+              </div>
+            </div>
+            <label class="config-field">
+              <span>邮件接收</span>
+              <input type="email" id="cfReceiveMailbox" class="input config-input" placeholder="用于接收转发邮件的邮箱" autocomplete="off" />
+            </label>
+            <label class="config-field config-toggle-row">
+              <span>随机子域</span>
+              <span class="provider-toggle">
+                <input type="checkbox" id="cfRandomSubdomain" />
+                <span class="provider-toggle-track"><span class="provider-toggle-thumb"></span></span>
+              </span>
+              <em>依赖后端 RANDOM_SUBDOMAIN_DOMAINS</em>
+            </label>
+            <div class="config-field domain-field">
+              <span>TEMP 域名</span>
+              <div class="domain-control">
+                <input type="text" id="cfTempDomain" class="input config-input" list="cfTempDomainOptions" placeholder="请先更新域名，也可手动填写" autocomplete="off" />
+                <datalist id="cfTempDomainOptions"></datalist>
+                <button class="btn btn-ghost btn-small" id="btnCfRefreshDomains" type="button">更新</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mail-provider-panel" id="cloudMailProviderPanel" hidden>
+          <div class="provider-panel-title">
+            <div>
+              <strong>CLOUD MAIL</strong>
+              <span>用于接收 ChatGPT 验证码邮件</span>
+            </div>
+          </div>
+          <div class="config-grid">
+            <label class="config-field">
+              <span>API 地址</span>
+              <input type="text" id="cloudMailBaseUrl" class="input config-input" placeholder="https://your-cloudmail-domain" autocomplete="off" />
+            </label>
+            <label class="config-field">
+              <span>管理员邮箱</span>
+              <input type="email" id="cloudMailAdminEmail" class="input config-input" placeholder="admin@example.com" autocomplete="off" />
+            </label>
+            <label class="config-field secret-field">
+              <span>管理员密码</span>
+              <input type="password" id="cloudMailAdminPassword" class="input config-input secret-input" placeholder="Cloud Mail 管理员密码" autocomplete="off" />
+              <button type="button" class="secret-toggle" data-target="cloudMailAdminPassword" title="显示/隐藏">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </label>
+            <label class="config-field">
+              <span>域名</span>
+              <input type="text" id="cloudMailDomain" class="input config-input" placeholder="mail.example.com" autocomplete="off" />
+            </label>
+          </div>
+        </section>
+
+        <p class="modal-tip import-format-tip" id="importFormatTip">Outlook 每行一个：<code>账号----密码----clientid----刷新令牌</code></p>
+        <p class="modal-tip text-muted import-provider-help" id="importProviderHelp">选择外部邮箱服务后，文本框填写 OpenAI 登录邮箱；第二段可填 OpenAI 登录密码，也可填占位值 x。取验证码会使用上面的 Provider 配置。</p>
         <textarea id="importTextarea" class="textarea" rows="10" placeholder="user@outlook.com----password123----client-id-here----refresh-token-here&#10;user2@outlook.com--pass--clientid--token"></textarea>
         <div id="importPreview" class="import-preview">
           <span class="preview-hint">💡 粘贴邮箱数据后将自动预览，支持 Ctrl+Enter 快捷导入</span>
