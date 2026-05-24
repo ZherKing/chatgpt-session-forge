@@ -299,6 +299,10 @@ function downloadBlobFile(filename, blob) {
 }
 
 function downloadCpaJsonFiles(accounts, baseFilename = 'sessions-cpa') {
+  return downloadCredentialJsonFiles(accounts, baseFilename, 'cpa');
+}
+
+function downloadCredentialJsonFiles(accounts, baseFilename = 'sessions-cpa', format = 'cpa') {
   const list = (Array.isArray(accounts) ? accounts : [accounts]).filter(Boolean);
   const date = new Date().toISOString().slice(0, 10);
 
@@ -307,7 +311,7 @@ function downloadCpaJsonFiles(accounts, baseFilename = 'sessions-cpa') {
   }
 
   const files = list.map((account, index) => ({
-    name: cpaJsonFilename(account, index, list.length),
+    name: credentialJsonFilename(account, index, list.length, format),
     content: JSON.stringify(account, null, 2),
   }));
 
@@ -322,10 +326,15 @@ function downloadCpaJsonFiles(accounts, baseFilename = 'sessions-cpa') {
 }
 
 function cpaJsonFilename(account, index, total) {
+  return credentialJsonFilename(account, index, total, 'cpa');
+}
+
+function credentialJsonFilename(account, index, total, format = 'cpa') {
   const email = sanitizeFilename(account?.email || account?.user_id || `account-${index + 1}`);
   const accountId = sanitizeFilename(account?.account_id || account?.chatgpt_account_id || '');
   const shortId = accountId ? accountId.slice(0, 8) : '';
-  const id = shortId ? `codex-${email}-${shortId}` : `codex-${email}`;
+  const filePrefix = format === 'cockpit' ? 'cockpit' : 'codex';
+  const id = shortId ? `${filePrefix}-${email}-${shortId}` : `${filePrefix}-${email}`;
   const prefix = total > 1 ? `${String(index + 1).padStart(3, '0')}-` : '';
   return `${prefix}${id || `account-${index + 1}`}.json`;
 }
