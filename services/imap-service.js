@@ -13,6 +13,15 @@ const ACCESS_TOKEN_SKEW_MS = 60 * 1000;
 const IMAP_IDLE_CLOSE_MS = 30 * 1000;
 const accessTokenCache = new Map();
 const imapClientPool = new Map();
+const IMAP_RECOVERABLE_ERROR_CODES = new Set([
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ESOCKET',
+  'ENOTCONN',
+  'EHOSTUNREACH',
+  'ECONNABORTED',
+]);
 
 async function refreshAccessToken(clientId, refreshToken) {
   const token = await refreshAccessTokenForScope(clientId, refreshToken, IMAP_TOKEN_SCOPES[0]);
@@ -106,6 +115,21 @@ async function fetchEmails(account, options = {}) {
 }
 
 async function fetchEmailsWithToken(email, token, options = {}) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await fetchEmailsWithTokenOnce(email, token, options);
+    } catch (err) {
+      lastError = normalizeImapError(err);
+      if (!isRecoverableImapError(lastError) || attempt > 0) throw lastError;
+    }
+  }
+
+  throw lastError || new Error('IMAP fetch failed');
+}
+
+async function fetchEmailsWithTokenOnce(email, token, options = {}) {
   const {
     keyword = '',
     sender = '',
@@ -115,11 +139,12 @@ async function fetchEmailsWithToken(email, token, options = {}) {
     stopOnCode = false,
   } = options;
   let clientRef = null;
+  let mailbox = null;
 
   try {
     clientRef = await getImapClient(email, token);
     const client = clientRef.client;
-    const mailbox = await client.getMailboxLock('INBOX', { readOnly: true });
+    mailbox = await client.getMailboxLock('INBOX', { readOnly: true });
 
     try {
       const searchCriteria = recentOnly ? { all: true } : buildSearchCriteria(keyword, sender);
@@ -173,11 +198,15 @@ async function fetchEmailsWithToken(email, token, options = {}) {
       messages.sort((a, b) => new Date(b.date) - new Date(a.date));
       return buildFetchResult(messages, token);
     } finally {
-      mailbox.release();
+      try {
+        mailbox?.release();
+      } catch {
+        // Ignore release errors for already-broken sockets.
+      }
     }
   } catch (err) {
     if (clientRef) closeImapClient(clientRef.key);
-    throw err;
+    throw normalizeImapError(err);
   } finally {
     if (clientRef) releaseImapClient(clientRef.key);
   }
@@ -186,7 +215,7 @@ async function fetchEmailsWithToken(email, token, options = {}) {
 async function getImapClient(email, token) {
   const key = imapClientKey(email, token);
   const existing = imapClientPool.get(key);
-  if (existing?.client && !existing.client.isClosed && existing.client.usable) {
+  if (existing?.client && !existing.hasError && !existing.client.isClosed && existing.client.usable) {
     if (existing.closeTimer) clearTimeout(existing.closeTimer);
     existing.closeTimer = null;
     return { key, client: existing.client };
@@ -213,11 +242,25 @@ async function getImapClient(email, token) {
     disableCompression: true,
     logger: false,
     greetingTimeout: 8000,
-    socketTimeout: 12000,
+    socketTimeout: config.imap.timeout || 30000,
   });
-  const entry = { client, closeTimer: null };
+  const entry = {
+    client,
+    closeTimer: null,
+    hasError: false,
+    lastError: null,
+  };
   imapClientPool.set(key, entry);
-  client.on('error', () => {});
+  client.on('error', err => {
+    const normalized = normalizeImapError(err);
+    entry.hasError = true;
+    entry.lastError = normalized;
+    if (imapClientPool.get(key)?.client === client) closeImapClient(key);
+  });
+  client.on('end', () => {
+    entry.hasError = true;
+    if (imapClientPool.get(key)?.client === client) closeImapClient(key);
+  });
   client.on('close', () => {
     if (imapClientPool.get(key)?.client === client) imapClientPool.delete(key);
   });
@@ -232,7 +275,10 @@ async function getImapClient(email, token) {
 
 function releaseImapClient(key) {
   const entry = imapClientPool.get(key);
-  if (!entry?.client || entry.client.isClosed) return;
+  if (!entry?.client || entry.client.isClosed || entry.hasError) {
+    closeImapClient(key);
+    return;
+  }
   if (entry.closeTimer) clearTimeout(entry.closeTimer);
   entry.closeTimer = setTimeout(() => closeImapClient(key), IMAP_IDLE_CLOSE_MS);
 }
@@ -247,6 +293,30 @@ function closeImapClient(key) {
   } catch {
     // ignore close errors
   }
+}
+
+function normalizeImapError(err) {
+  if (!err) return new Error('Unknown IMAP error');
+  const normalized = err instanceof Error ? err : new Error(String(err));
+  if (normalized.code || normalized.errno) return normalized;
+
+  const message = String(normalized.message || '');
+  if (message.includes('ECONNRESET')) normalized.code = 'ECONNRESET';
+  if (message.includes('ETIMEDOUT')) normalized.code = 'ETIMEDOUT';
+  return normalized;
+}
+
+function isRecoverableImapError(err) {
+  const code = String(err?.code || err?.errno || '').toUpperCase();
+  const message = String(err?.message || '').toLowerCase();
+  return (
+    IMAP_RECOVERABLE_ERROR_CODES.has(code) ||
+    message.includes('econnreset') ||
+    message.includes('socket closed unexpectedly') ||
+    message.includes('connection closed') ||
+    message.includes('read timeout') ||
+    message.includes('unexpected close')
+  );
 }
 
 function imapClientKey(email, token) {
